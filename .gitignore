@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.Python
+build/
+dist/
+
+# 가상환경
+venv/
+env/
+.venv/
+
+# 환경변수
+.env
+
+# HuggingFace 모델 캐시 (런타임에 자동 다운로드)
+.cache/
+*.bin
+*.safetensors
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
