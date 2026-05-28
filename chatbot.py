@@ -4,6 +4,14 @@ from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import os
 import re
+import requests
+
+# 백엔드 분석 API (DB 조회·추천·저장 담당). 환경변수로 덮어쓸 수 있음.
+BACKEND_URL = os.environ.get(
+    "BACKEND_URL",
+    "https://dermalens-production.up.railway.app/api/analysis/chat/"
+)
+BACKEND_TIMEOUT = float(os.environ.get("BACKEND_TIMEOUT", "5"))
 
 # 한글 완성형 음절(가-힣) / 영문 단어 패턴
 KOREAN_SYLLABLE_RE = re.compile(r'[가-힣]')
@@ -671,11 +679,36 @@ def generate_response(intent, keywords, user_input=""):
     }
 
 
+def call_backend(user_id, message, intent, keywords):
+    """백엔드 분석 API 호출. 성공 시 응답 dict, 실패/미설정 시 None.
+    실패 시 호출부가 더미 데이터로 자동 폴백."""
+    if not BACKEND_URL:
+        return None
+    try:
+        resp = requests.post(
+            BACKEND_URL,
+            json={
+                "user_id": user_id,
+                "message": message,
+                "intent": intent,
+                "keywords": keywords,
+            },
+            timeout=BACKEND_TIMEOUT,
+        )
+        if resp.ok:
+            return resp.json()
+        print(f"[Backend] HTTP {resp.status_code}: {resp.text[:200]}")
+    except Exception as e:
+        print(f"[Backend] 호출 실패, 더미 데이터로 폴백: {e}")
+    return None
+
+
 @app.route("/chat", methods=["POST"])
 def chat():
     # FIX: 요청 본문 방어
     data = request.get_json(silent=True) or {}
     user_input = (data.get("message") or "").strip()
+    user_id = data.get("user_id")  # 선택 (백엔드 로그용)
 
     if not user_input:
         return jsonify({
@@ -687,7 +720,7 @@ def chat():
             "quickReplies": ["제품 추천", "성분 분석", "피부 진단"]
         })
 
-    # 자모만 있거나 기호만 있는 무의미 입력은 분류기 돌리지 않고 바로 UNKNOWN
+    # 자모만 있거나 기호만 있는 무의미 입력은 분류기·백엔드 모두 건너뛰고 UNKNOWN
     if not is_meaningful_text(user_input):
         response = generate_response("UNKNOWN", {}, user_input=user_input)
         response["score"] = 0.0
@@ -715,6 +748,17 @@ def chat():
     if not keywords and score < 0.7:
         intent = "UNKNOWN"
 
+    # 백엔드 호출 — UNKNOWN은 DB 조회 의미없으므로 건너뛰고 챗봇이 직접 안내
+    if intent != "UNKNOWN":
+        backend_resp = call_backend(user_id, user_input, intent, keywords)
+        if backend_resp is not None:
+            # 안전망: 백엔드가 일부 필드 빠뜨려도 챗봇 NLP 결과로 채움
+            backend_resp.setdefault("intent", intent)
+            backend_resp.setdefault("score", round(float(score), 3))
+            backend_resp.setdefault("keywords", keywords)
+            return jsonify(backend_resp)
+
+    # 폴백: 백엔드 실패 / UNKNOWN → 챗봇의 더미 응답 사용 (시연 안 끊김)
     response = generate_response(intent, keywords, user_input=user_input)
     response["score"] = round(float(score), 3)
     response["keywords"] = keywords
@@ -1071,7 +1115,7 @@ async function sendMessage() {
     const res = await fetch("/chat", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({message})
+        body: JSON.stringify({message, user_id: 1})
     });
 
     const data = await res.json();
@@ -1112,3 +1156,4 @@ if __name__ == "__main__":
     # FIX: 환경변수로만 debug 활성화 (기본은 OFF)
     debug_mode = os.environ.get("FLASK_DEBUG", "0") == "1"
     app.run(host="0.0.0.0", port=5000, debug=debug_mode)
+
