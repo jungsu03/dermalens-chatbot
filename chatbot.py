@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify, render_template_string
+from flask_cors import CORS
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
@@ -28,6 +29,8 @@ def is_meaningful_text(text):
     return False
 
 app = Flask(__name__)
+# CORS 허용 — 프론트엔드(다른 도메인)에서 /chat 호출 가능하게
+CORS(app, resources={r"/chat": {"origins": "*"}})
 
 # =========================================
 # DermaLens 챗봇
