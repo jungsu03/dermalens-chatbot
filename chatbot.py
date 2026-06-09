@@ -329,6 +329,9 @@ SKIN_TYPE_SEMANTIC_THRESHOLD = 0.55
 # -------------------------------
 FAQ_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "faq.json")
 FAQ_MATCH_THRESHOLD = 0.7  # 0.7 이상이면 FAQ 답변 반환 (정확도 우선 — 큐레이션된 72개 Q&A 기준)
+# 입력이 FAQ 질문과 거의 동일(유사도 0.8 이상)하면 의도분류·키워드 라우팅보다 먼저 FAQ 답변.
+# FAQ 질문이 '선크림'·'성분' 같은 키워드 때문에 다른 의도로 새는 것을 방지.
+FAQ_STRONG_THRESHOLD = 0.8
 
 try:
     with open(FAQ_PATH, "r", encoding="utf-8") as f:
@@ -1412,6 +1415,19 @@ def chat():
     # 임베딩 1회만 계산해서 FAQ + 의도분류 + 피부타입 의미 매칭에 재사용
     user_embedding = model.encode([user_input])
 
+    # FAQ 강매칭 우선 처리 — 입력이 FAQ 질문과 거의 동일하면(유사도 0.8↑)
+    # 의도분류·키워드 라우팅보다 먼저 FAQ 답변을 반환 (FAQ 질문이 다른 의도로 새는 것 방지)
+    faq_strong = find_faq_match(user_input, embedding=user_embedding)
+    if faq_strong and faq_strong["score"] >= FAQ_STRONG_THRESHOLD:
+        return jsonify({
+            "intent": "FAQ",
+            "score": round(faq_strong["score"], 3),
+            "keywords": {"category": faq_strong["category"]},
+            "message": faq_strong["answer"],
+            "components": [],
+            "quickReplies": ["제품 추천", "성분 분석", "피부 진단"]
+        })
+
     keywords = extract_keywords(user_input, embedding=user_embedding)
 
     # 성분명 오타 보정 — alias 매칭이 실패했을 때만 fuzzy 시도
@@ -2198,7 +2214,7 @@ const quickMap = {
     
     "이미지로 분석": "성분 사진",
     "다시 처음으로": "성분 분석해줘",
-    "자주 묻는 질문": "자주 묻는 질문 보여줘",
+    "자주 묻는 질문": "메뉴",
     "글리세린 위험해?": "글리세린 위험해?",
     "페녹시에탄올 위험해?": "페녹시에탄올 위험해?",
     "예민한 편": "민감성 크림 추천",
